@@ -1,0 +1,24 @@
+{
+    "name": "turbo-latest",
+    "private": true,
+    "scripts": {
+        "build": "turbo build",
+        "dev": "turbo dev",
+        "lint": "turbo lint",
+        "format": "prettier --write \"**/*.{ts,tsx,md}\" --config \".prettier.config.js\" ",
+        "test": "turbo run test"
+    },
+    "devDependencies": {
+        "prettier": "^3.2.5",
+        "turbo": "^2.2.3",
+        "typescript": "5.5.4"
+    },
+    "engines": {
+        "node": ">=18"
+    },
+    "packageManager": "npm@10.9.0",
+    "workspaces": [
+        "apps/*",
+        "packages/*"
+    ]
+}
