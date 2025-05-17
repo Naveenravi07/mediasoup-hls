@@ -11,9 +11,6 @@ import {
 } from 'mediasoup/node/lib/types';
 import * as mediasoup from 'mediasoup';
 import { UsersService } from 'src/users/users.service';
-import { RedisService } from '@liaoliaots/nestjs-redis';
-import { Redis } from 'ioredis';
-import { CustomSocket } from '../mediasoup/dto/custom-client';
 import { TransportProduceReq } from './dto/transport-produce-req';
 import { ConsumeSingleUserReq } from './dto/consume-single-user-req';
 import { type TransportConsumeReq } from './dto/transport-cnsume-req';
@@ -57,8 +54,6 @@ type Room = {
 
 @Injectable()
 export class MediasoupService implements OnModuleInit, OnModuleDestroy {
-    private subClient: Redis;
-    private roomOwner: CustomSocket | undefined;
     private worker: Worker | undefined;
 
     private room: Room = {
@@ -68,13 +63,10 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
         producers: new Map(),
         consumers: new Map(),
     };
-    private roomId = 'default-room'; // Define a single room ID
 
     constructor(
         private readonly userService: UsersService,
-        private readonly redis: RedisService,
     ) {
-        this.subClient = redis.getOrThrow('subscriber');
     }
 
     async onModuleInit() {
@@ -91,26 +83,6 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
         });
     }
 
-    async subscribeToMessages() {
-        this.subClient.on('message', (channel, message) => {
-            if (channel === 'user-waiting') {
-                const { userId, userName, pfp } = JSON.parse(message);
-
-                this.roomOwner?.emit('pending-approval', {
-                    roomId: this.roomId,
-                    userId,
-                    userName,
-                    pfp,
-                });
-            }
-        });
-
-        await this.subClient.subscribe('user-waiting');
-    }
-
-    async setRoomOwner(socket: CustomSocket) {
-        this.roomOwner = socket;
-    }
 
     async addUserToRoom(user: { name: string; id: string }) {
         const userData = await this.userService.getUser(user.id);

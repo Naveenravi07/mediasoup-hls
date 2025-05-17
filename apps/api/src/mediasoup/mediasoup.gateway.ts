@@ -31,7 +31,6 @@ export class MediasoupGateway implements OnGatewayConnection, OnGatewayDisconnec
     ) { }
 
     async onModuleInit() {
-        await this.MediasoupService.subscribeToMessages()
     }
 
     handleConnection(client: CustomSocket) {

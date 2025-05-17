@@ -3,7 +3,6 @@ import { DatabaseModule } from './database/database.module';
 import { ConfigModule } from '@nestjs/config';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
-import { MeetModule } from './meet/meet.module';
 import { MediasoupModule } from './mediasoup/mediasoup.module';
 import { RedisModule } from '@liaoliaots/nestjs-redis';
 
@@ -13,7 +12,6 @@ import { RedisModule } from '@liaoliaots/nestjs-redis';
         DatabaseModule,
         UsersModule,
         AuthModule,
-        MeetModule,
         MediasoupModule,
         RedisModule.forRoot({
             config: [
@@ -22,11 +20,6 @@ import { RedisModule } from '@liaoliaots/nestjs-redis';
                     host: 'localhost',
                     port: 6379,
                 },
-                {
-                    namespace: 'subscriber',
-                    host: 'localhost',
-                    port: 6379,
-                }
             ]
 
         })
