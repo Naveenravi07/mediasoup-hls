@@ -35,7 +35,7 @@ export class MediasoupHandler {
     public async createSendTransport(): Promise<void> {
         if (!this.device) return;
 
-        return new Promise(async (resolve, reject) => {
+        return new Promise(async (resolve, _reject) => {
             socket.emit('createTransport', { consumer: false }, async (transportData: any) => {
                 this.sendTransport = this.device!.createSendTransport(transportData);
 
@@ -148,7 +148,7 @@ export class MediasoupHandler {
     public async createRecvTransport(): Promise<void> {
         if (!this.device) return;
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, _reject) => {
             socket.emit('createTransport', { consumer: true }, (transportData: any) => {
                 this.recvTransport = this.device!.createRecvTransport(transportData);
 
@@ -174,7 +174,7 @@ export class MediasoupHandler {
     public async consumeAllVideoStreams(): Promise<Map<string, MediaStreamTrack[]>> {
         if (!this.device || !this.recvTransport) return new Map();
 
-        return new Promise((resolve, reject) => {
+        return new Promise((resolve, _reject) => {
             socket.emit('transportConsume', {
                 rtpCapabilities: this.device!.rtpCapabilities,
             }, async (consumeData: any) => {

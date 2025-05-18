@@ -9,11 +9,6 @@ import { Participant } from "./types";
 import { type Socket } from "socket.io-client";
 import { useEffect, useState } from "react";
 
-type WaitingUser = {
-    userId: string,
-    pfp: string,
-    userName: string
-}
 export function UserManagementModal({
     open = false,
     onOpenChange,

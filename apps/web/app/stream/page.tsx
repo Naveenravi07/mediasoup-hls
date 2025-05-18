@@ -15,17 +15,13 @@ import { useToast } from '@/hooks/use-toast';
 
 export default function Component() {
     const { user } = useAuth()
-    const router = useRouter()
     const [participants, setParticipants] = useState<Participant[]>([]);
     const containerRef = useRef<HTMLDivElement>(null);
-    const [currentPage, setCurrentPage] = useState(0);
     const device = useRef<mediasoupClient.Device | null>(null);
     const ms_handler = useRef<MediasoupHandler | null>(null);
     const [P_Popup, setP_Popup] = useState(false)
-    const [S_Popup, setS_Popup] = useState(false)
     const { toast } = useToast()
     const [notifications, setNotifications] = useState<string[]>([]);
-    const [isInitialized, setIsInitialized] = useState(false);
     const [isVideoLoading, setIsVideoLoading] = useState(false);
     const [isAudioLoading, setIsAudioLoading] = useState(false);
 
@@ -226,7 +222,6 @@ export default function Component() {
         socket.emit('initialize', null,
             (status: boolean) => {
                 socket.emit('getRTPCapabilities', null);
-                setIsInitialized(true);
             },
         );
     };
@@ -244,12 +239,6 @@ export default function Component() {
         }]);
     };
 
-    const onPendingApprovalReq = async (data: any) => {
-        let wav = new Audio("/userarrived.wav")
-        wav.play()
-        setNotifications(prev => [...prev, 'userList']);
-        console.log(data)
-    }
 
     const onErrorMessage = async (err: any) => {
         toast({
@@ -278,7 +267,6 @@ export default function Component() {
         socket.on('userLeft', onUserLeave)
         socket.on('newProducer', onNewProducerAdded)
         socket.on('producerClosed', onProducerClosed)
-        socket.on('pending-approval', onPendingApprovalReq)
         socket.on('error', onErrorMessage)
 
         return () => {
@@ -288,7 +276,6 @@ export default function Component() {
             socket.off('newProducer', onNewProducerAdded)
             socket.off('userLeft', onUserLeave)
             socket.off('producerClosed', onProducerClosed)
-            socket.off('pending-approval', onPendingApprovalReq)
             socket.off('error', onErrorMessage)
 
 
@@ -303,33 +290,6 @@ export default function Component() {
     }, [user]);
 
 
-    useEffect(() => {
-        if (isInitialized) {
-
-            const fetchInitialMediaState = async () => {
-                const initialMediaState = localStorage.getItem("initialMediaState");
-                if (initialMediaState) {
-                    const { video, audio, videoDeviceId, audioDeviceId } = JSON.parse(initialMediaState);
-
-                    let videoResult = true, audioResult = true;
-
-                    if (video) videoResult = await handleMyVideoToggle(videoDeviceId);
-                    if (audio) audioResult = await handleMyAudioToggle(audioDeviceId);
-
-                    if (videoResult && audioResult) {
-                        localStorage.removeItem("initialMediaState");
-                    } else {
-                        toast({
-                            title: "Some error occurred",
-                            description: "Error trying to send your media to server",
-                            variant: "destructive"
-                        })
-                    }
-                }
-            };
-            fetchInitialMediaState();
-        }
-    }, [isInitialized]);
 
 
     const handleMyAudioToggle = async (deviceId?: string) => {
@@ -458,11 +418,9 @@ export default function Component() {
                 <VideoControls
                     user={user!}
                     participants={participants}
-                    setCurrentPage={setCurrentPage}
                     handleMyAudioToggle={handleMyAudioToggle}
                     handleMyVideoToggle={handleMyVideoToggle}
                     handleParticipantsButtonClick={handleParticipantsButtonClick}
-                    hanleSettingsButtonClick={() => { setS_Popup(true) }}
                     notifications={notifications}
                     isVideoLoading={isVideoLoading}
                     isAudioLoading={isAudioLoading}
