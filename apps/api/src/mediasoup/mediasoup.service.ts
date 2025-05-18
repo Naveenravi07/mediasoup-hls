@@ -195,7 +195,47 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
 
         this.room.users.get(userId)?.producersIds.push(producer.id);
 
+        await this.addProducerToRecording(producer, userId, kind);
         return { id: producer.id, userId, kind };
+    }
+
+
+    async addProducerToRecording(producer: Producer<mediasoup.types.AppData>, userId: string, kind: string) {
+
+        const plainTransport = await this.room.router?.createPlainTransport({
+            listenIp: { ip: '127.0.0.1', announcedIp: undefined },
+            rtcpMux: true,
+            comedia: true
+        });
+
+        if (!plainTransport) throw new Error("Failed to create transport")
+        let rtpcap = this.room?.router?.rtpCapabilities
+
+        const rtpCapabilities = {
+            codecs: rtpcap?.codecs?.filter(codec =>
+                ['audio/opus', 'video/VP8', 'video/H264'].includes(codec.mimeType)
+            ),
+            headerExtensions: rtpcap?.headerExtensions?.filter(ext =>
+                ['urn:ietf:params:rtp-hdrext:sdes:mid', 'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time'].includes(ext.uri)
+            )
+        };
+
+        const consumer = await plainTransport.consume({
+            producerId: producer.id,
+            rtpCapabilities: rtpCapabilities,
+            paused: false
+        });
+
+        const transportInfo = {
+            ip: plainTransport.tuple.localIp,
+            port: plainTransport.tuple.localPort
+        };
+
+
+        console.log(rtpCapabilities)
+        console.log(transportInfo)
+        console.log(`Added ${kind} stream from user ${userId} to streaming system`);
+
     }
 
     async createConsumerFromTransport(data: TransportConsumeReq, userId: string) {
