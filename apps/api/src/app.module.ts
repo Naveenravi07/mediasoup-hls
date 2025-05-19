@@ -5,6 +5,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { MediasoupModule } from './mediasoup/mediasoup.module';
 import { RedisModule } from '@liaoliaots/nestjs-redis';
+import { LoggerModule } from './logger/logger.module';
 
 @Module({
     imports: [
@@ -25,6 +26,6 @@ import { RedisModule } from '@liaoliaots/nestjs-redis';
         })
     ],
     controllers: [],
-    providers: [],
+    providers: [LoggerModule],
 })
 export class AppModule { }

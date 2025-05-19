@@ -20,5 +20,10 @@
     "workspaces": [
         "apps/*",
         "packages/*"
-    ]
+    ],
+    "dependencies": {
+        "@nestjs/serve-static": "^4.0.0",
+        "@vidstack/react": "^0.6.15",
+        "hls.js": "^1.6.2"
+    }
 }

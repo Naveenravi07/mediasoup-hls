@@ -14,6 +14,7 @@ import { UsersService } from 'src/users/users.service';
 import { TransportProduceReq } from './dto/transport-produce-req';
 import { ConsumeSingleUserReq } from './dto/consume-single-user-req';
 import { type TransportConsumeReq } from './dto/transport-cnsume-req';
+import { StreamingService } from '../streaming/streaming.service';
 
 type UserData = {
     id: string;
@@ -66,6 +67,7 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
 
     constructor(
         private readonly userService: UsersService,
+        private readonly streamingService: StreamingService,
     ) {
     }
 
@@ -195,22 +197,29 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
 
         this.room.users.get(userId)?.producersIds.push(producer.id);
 
-        await this.addProducerToRecording(producer, userId, kind);
+        await this.addProducerForStreaming(producer, userId, kind);
         return { id: producer.id, userId, kind };
     }
 
 
-    async addProducerToRecording(producer: Producer<mediasoup.types.AppData>, userId: string, kind: string) {
+    async addProducerForStreaming(producer: Producer<mediasoup.types.AppData>, userId: string, kind: string) {
+        // Find available ports
+        const portRange = { min: 10000, max: 10100 };
+        const port = await this.findAvailablePort(portRange.min, portRange.max);
+        if (!port) {
+            throw new Error("No available ports found");
+        }
 
+        // Create plain transport with specific port and RTCP configuration
         const plainTransport = await this.room.router?.createPlainTransport({
             listenIp: { ip: '127.0.0.1', announcedIp: undefined },
-            rtcpMux: true,
-            comedia: true
+            rtcpMux: false,  
+            comedia: false,
         });
 
-        if (!plainTransport) throw new Error("Failed to create transport")
-        let rtpcap = this.room?.router?.rtpCapabilities
+        if (!plainTransport) throw new Error("Failed to create transport");
 
+        let rtpcap = this.room?.router?.rtpCapabilities;
         const rtpCapabilities = {
             codecs: rtpcap?.codecs?.filter(codec =>
                 ['audio/opus', 'video/VP8', 'video/H264'].includes(codec.mimeType)
@@ -219,23 +228,68 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
                 ['urn:ietf:params:rtp-hdrext:sdes:mid', 'http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time'].includes(ext.uri)
             )
         };
-
+        if(rtpCapabilities.codecs?.length === 0) throw new Error("No codecs found");
+        
+        // Create consumer
         const consumer = await plainTransport.consume({
             producerId: producer.id,
             rtpCapabilities: rtpCapabilities,
             paused: false
         });
 
-        const transportInfo = {
+        // Connect the transport with the correct ports
+        await plainTransport.connect({
+            ip: '127.0.0.1',
+            port: port,
+            rtcpPort: port + 1
+        });
+
+        console.log('Transport connected:', {
             ip: plainTransport.tuple.localIp,
-            port: plainTransport.tuple.localPort
-        };
+            port: port,
+            rtcpPort: port + 1,
+            mediasoupPort: plainTransport.tuple.localPort,
+            rtcpTuple: plainTransport.rtcpTuple
+        });
 
+        await this.streamingService.addStreamData({
+            transport: plainTransport,
+            kind: kind as MediaKind,
+            userId,
+            rtpParameters: consumer.rtpParameters,
+            producerId: producer.id,
+            port: port,
+            rtcpPort: port + 1
+        });
+    }
 
-        console.log(rtpCapabilities)
-        console.log(transportInfo)
-        console.log(`Added ${kind} stream from user ${userId} to streaming system`);
-
+    private async findAvailablePort(min: number, max: number): Promise<number | null> {
+        const net = require('net');
+        
+        for (let port = min; port <= max; port++) {
+            try {
+                await new Promise((resolve, reject) => {
+                    const server = net.createServer();
+                    server.once('error', (err: any) => {
+                        if (err.code === 'EADDRINUSE') {
+                            resolve(false);
+                        } else {
+                            reject(err);
+                        }
+                    });
+                    server.once('listening', () => {
+                        server.close();
+                        resolve(true);
+                    });
+                    server.listen(port);
+                });
+                return port;
+            } catch (err) {
+                console.error(`Error checking port ${port}:`, err);
+                continue;
+            }
+        }
+        return null;
     }
 
     async createConsumerFromTransport(data: TransportConsumeReq, userId: string) {

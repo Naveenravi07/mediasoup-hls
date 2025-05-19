@@ -1,0 +1,247 @@
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { StreamData } from './dto/streamData';
+import { ChildProcess, spawn } from 'child_process';
+import { RtpParameters, MediaKind } from 'mediasoup/node/lib/rtpParametersTypes';
+import path from 'path';
+import fs from 'fs';
+import { LoggerService } from '../logger/logger.service';
+
+@Injectable()
+export class StreamingService implements OnModuleInit, OnModuleDestroy {
+    constructor(private readonly logger: LoggerService) {}
+
+    private active: boolean = false;
+    public plainTransport: StreamData[] = [];
+    private ffmpegProcess: ChildProcess | null = null;
+    private sdpDirPath: string = path.join(process.cwd(), 'sdp');
+    private hlsDirPath: string = path.join(process.cwd(), 'hls');
+    private readonly loggerName = 'ffmpeg';
+
+    onModuleInit() {
+        if (!fs.existsSync(this.sdpDirPath)) {
+            fs.mkdirSync(this.sdpDirPath, { recursive: true });
+        }
+        if (!fs.existsSync(this.hlsDirPath)) {
+            fs.mkdirSync(this.hlsDirPath, { recursive: true });
+        }
+    }
+
+    onModuleDestroy() {
+        console.log('StreamingService destroyed');
+    }
+
+    getActive() {
+        return this.active;
+    }
+
+    addStreamData(streamData: StreamData) {
+        this.plainTransport.push(streamData);
+
+        if (this.plainTransport.length === 1) {
+            this.startStreaming();
+        } else {
+            this.restartStreaming();
+        }
+    }
+
+    startStreaming() {
+        if (this.plainTransport.length === 0) {
+            throw new Error('No stream data to start streaming');
+        }
+        if (this.ffmpegProcess) {
+            console.log('Killing existing ffmpeg process');
+            this.ffmpegProcess.kill();
+        }
+        this.active = true;
+
+        const audioStreamData = this.plainTransport.filter(stream => stream.kind === 'audio');
+        const videoStreamData = this.plainTransport.filter(stream => stream.kind === 'video');
+
+        if (!audioStreamData || !videoStreamData) {
+            throw new Error('No audio or video stream data to start streaming');
+        }
+        const ffmpegArgs = [
+            '-loglevel', 'verbose',
+            '-analyzeduration', '10000000',
+            '-probesize', '10000000',
+            '-y'
+        ];
+
+        this.plainTransport.forEach((transportData, index) => {
+            const { transport, rtpParameters, kind,port } = transportData
+            let {localIp} = transport.tuple
+            const sdpContent = this.generateSDP(kind, localIp, port, rtpParameters);
+
+            const sdpFilePath = path.join(this.sdpDirPath, `${index}.sdp`);
+            fs.writeFileSync(sdpFilePath, sdpContent);
+
+            ffmpegArgs.push('-protocol_whitelist', 'file,rtp,udp');
+            ffmpegArgs.push('-i', sdpFilePath);
+        })
+        if (videoStreamData.length > 1) {
+            const layoutFilter = this.createGridLayout(videoStreamData.length);
+            ffmpegArgs.push('-filter_complex', layoutFilter);
+            ffmpegArgs.push('-map', '[v]');
+        } else if (videoStreamData.length === 1) {
+            const videoIndex = this.plainTransport.findIndex(t => t.kind === 'video');
+            ffmpegArgs.push('-map', `${videoIndex}:v`);
+        }
+
+        if (audioStreamData.length > 1) {
+            let audioMixFilter = '';
+            audioStreamData.forEach((_, i) => {
+                const audioIndex = this.plainTransport.findIndex(
+                    (t, idx) => t.kind === 'audio' && audioStreamData.indexOf(t) === i);
+
+                audioMixFilter += `[${audioIndex}:a]`;
+            });
+            audioMixFilter += `amix=inputs=${audioStreamData.length}[a]`;
+            ffmpegArgs.push('-filter_complex', audioMixFilter);
+            ffmpegArgs.push('-map', '[a]');
+
+        } else if (audioStreamData.length === 1) {
+            const audioIndex = this.plainTransport.findIndex(t => t.kind === 'audio');
+            ffmpegArgs.push('-map', `${audioIndex}:a`);
+        }
+        ffmpegArgs.push(
+            // Video codec settings with explicit bitrate
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-tune', 'zerolatency',
+            '-b:v', '1000k',  // Reduced bitrate
+            '-maxrate', '1000k',
+            '-bufsize', '2000k',
+            '-g', '30',       // Keyframe interval
+            '-keyint_min', '30',
+            '-sc_threshold', '0',
+            '-bf', '0',       // Disable B-frames
+            '-profile:v', 'baseline',  // Use baseline profile
+            '-level', '3.0',  // Set H.264 level
+            '-x264opts', 'no-scenecut',  // Disable scene cut detection
+            
+            // Audio codec settings
+            '-c:a', 'aac',
+            '-ar', '48000',
+            '-b:a', '128k',
+
+            // HLS output settings
+            '-f', 'hls',
+            '-hls_time', '2',
+            '-hls_list_size', '10',
+            '-hls_flags', 'delete_segments+append_list',
+            '-hls_segment_filename', path.join(this.hlsDirPath, 'segment_%03d.ts'),
+            path.join(this.hlsDirPath, 'playlist.m3u8')
+        );
+
+        console.log('Starting FFmpeg with args:', ffmpegArgs.join(' '));
+        this.ffmpegProcess = spawn('ffmpeg', ffmpegArgs, {
+            detached: false,
+            stdio: ['pipe', 'pipe', 'pipe']
+        });
+
+        this.ffmpegProcess?.stdout?.on('data', (data) => {
+            this.logger.logStdout(this.loggerName, Buffer.from(data));
+        });
+        this.ffmpegProcess?.stderr?.on('data', (data) => {
+            this.logger.logStderr(this.loggerName, Buffer.from(data));
+        });
+
+        this.ffmpegProcess?.on('close', (code) => {
+            console.log('FFmpeg process closed with code:', code);
+        });
+
+
+    }
+
+    restartStreaming() {
+
+    }
+
+    generateSDP(kind: MediaKind, ip: string, port: number, rtpParameters: RtpParameters): string {
+        const { codecs, encodings, rtcp } = rtpParameters;
+        const codec = codecs[0];
+        if (!codec) {
+            throw new Error('No codec found');
+        }
+
+        let sdp = 'v=0\n';
+        sdp += 'o=- 0 0 IN IP4 ' + ip + '\n';
+        sdp += 's=FFmpeg\n';
+        sdp += 'c=IN IP4 ' + ip + '\n';
+        sdp += 't=0 0\n';
+        
+        if (kind === 'video') {
+            sdp += 'a=framerate:30\n';
+            if (codec.mimeType.toLowerCase().includes('vp8')) {
+                sdp += 'a=imageattr:' + codec.payloadType + ' send [x=1280,y=720] recv [x=1280,y=720]\n';
+            }
+        }
+        
+        sdp += 'm=' + kind + ' ' + port + ' RTP/AVP ' + codec.payloadType + '\n';
+        sdp += 'a=rtpmap:' + codec.payloadType + ' ' + codec.mimeType.split('/')[1] + '/' + codec.clockRate;
+        if (codec.channels && codec.mimeType.toLowerCase().includes('opus')) {
+            sdp += '/' + codec.channels;
+        }
+        sdp += '\n';
+
+        if (codec.parameters) {
+            const fmtps: string[] = [];
+            for (const key in codec.parameters) {
+                fmtps.push(key + '=' + codec.parameters[key]);
+            }
+            if (fmtps.length > 0) {
+                sdp += 'a=fmtp:' + codec.payloadType + ' ' + fmtps.join(';') + '\n';
+            }
+        }
+
+        sdp += 'a=recvonly\n';
+                if (rtcp?.cname) {
+            sdp += 'a=ssrc:' + (encodings?.[0]?.ssrc || 1) + ' cname:' + rtcp.cname + '\n';
+        }
+        
+        return sdp;
+    }
+
+
+    private createGridLayout(videoCount: number): string {
+        if (videoCount === 0) return '';
+        if (videoCount === 1) return '[0:v]scale=1280:720[v]';
+
+        let filter = '';
+        const rows = Math.ceil(Math.sqrt(videoCount));
+        const cols = Math.ceil(videoCount / rows);
+        const cellWidth = Math.floor(1280 / cols);
+        const cellHeight = Math.floor(720 / rows);
+
+        // Scale each video
+        for (let i = 0; i < videoCount; i++) {
+            const videoIndex = this.plainTransport.findIndex((t, idx) => t.kind === 'video' && idx === i);
+            if (videoIndex === -1) continue;
+            filter += `[${videoIndex}:v]scale=${cellWidth}:${cellHeight}[v${i}];`;
+        }
+
+        // Create grid
+        let xStack = '';
+        for (let r = 0; r < rows; r++) {
+            let rowStack = '';
+            for (let c = 0; c < cols; c++) {
+                const i = r * cols + c;
+                if (i < videoCount) {
+                    rowStack += `[v${i}]`;
+                }
+            }
+            if (rowStack) {
+                filter += `${rowStack}hstack=inputs=${Math.min(cols, videoCount - r * cols)}[row${r}];`;
+                xStack += `[row${r}]`;
+            }
+        }
+
+        filter += `${xStack}vstack=inputs=${rows}[v]`;
+        return filter;
+    }
+
+    getHls(){
+        return fs.readFileSync(path.join(this.hlsDirPath, 'playlist.m3u8'), 'utf8');
+    }
+
+} 
