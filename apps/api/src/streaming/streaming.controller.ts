@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Param } from '@nestjs/common';
 import { StreamingService } from './streaming.service';
 
 @Controller('streaming')
@@ -9,5 +9,8 @@ export class StreamingController {
     getHls() {
         return this.streamingService.getHls();
     }
-    
+    @Get('/:filename')
+    getHlsFile(@Param('filename') filename: string) {
+        return this.streamingService.getHlsFile(filename);
+    }
 } 

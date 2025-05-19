@@ -252,15 +252,18 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
             rtcpTuple: plainTransport.rtcpTuple
         });
 
-        await this.streamingService.addStreamData({
-            transport: plainTransport,
-            kind: kind as MediaKind,
-            userId,
-            rtpParameters: consumer.rtpParameters,
-            producerId: producer.id,
+        // Addd timeout or might get keyframe missing error
+        setTimeout(()=>{
+             this.streamingService.addStreamData({
+                transport: plainTransport,
+                kind: kind as MediaKind,
+                userId,
+                rtpParameters: consumer.rtpParameters,
+                producerId: producer.id,
             port: port,
             rtcpPort: port + 1
-        });
+            });
+        }, 2000);
     }
 
     private async findAvailablePort(min: number, max: number): Promise<number | null> {

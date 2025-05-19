@@ -14,7 +14,7 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
     public plainTransport: StreamData[] = [];
     private ffmpegProcess: ChildProcess | null = null;
     private sdpDirPath: string = path.join(process.cwd(), 'sdp');
-    private hlsDirPath: string = path.join(process.cwd(), 'hls');
+    private hlsDirPath: string = path.join(process.cwd(), 'public','hls');
     private readonly loggerName = 'ffmpeg';
 
     onModuleInit() {
@@ -57,18 +57,20 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
         const audioStreamData = this.plainTransport.filter(stream => stream.kind === 'audio');
         const videoStreamData = this.plainTransport.filter(stream => stream.kind === 'video');
 
+        this.plainTransport.forEach((m)=>console.log(m?.rtpParameters?.codecs))
+
         if (!audioStreamData || !videoStreamData) {
             throw new Error('No audio or video stream data to start streaming');
         }
         const ffmpegArgs = [
             '-loglevel', 'verbose',
-            '-analyzeduration', '10000000',
-            '-probesize', '10000000',
+            '-analyzeduration', '5000000',
+            '-probesize', '5000000',
             '-y'
         ];
 
         this.plainTransport.forEach((transportData, index) => {
-            const { transport, rtpParameters, kind,port } = transportData
+            const { transport, rtpParameters, kind, port } = transportData
             let {localIp} = transport.tuple
             const sdpContent = this.generateSDP(kind, localIp, port, rtpParameters);
 
@@ -76,15 +78,17 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
             fs.writeFileSync(sdpFilePath, sdpContent);
 
             ffmpegArgs.push('-protocol_whitelist', 'file,rtp,udp');
+            ffmpegArgs.push('-r', '30');
             ffmpegArgs.push('-i', sdpFilePath);
         })
+
         if (videoStreamData.length > 1) {
             const layoutFilter = this.createGridLayout(videoStreamData.length);
-            ffmpegArgs.push('-filter_complex', layoutFilter);
-            ffmpegArgs.push('-map', '[v]');
+            //ffmpegArgs.push('-filter_complex', layoutFilter);
+            //ffmpegArgs.push('-map', '[v]');
         } else if (videoStreamData.length === 1) {
             const videoIndex = this.plainTransport.findIndex(t => t.kind === 'video');
-            ffmpegArgs.push('-map', `${videoIndex}:v`);
+            //ffmpegArgs.push('-map', `${videoIndex}:v`);
         }
 
         if (audioStreamData.length > 1) {
@@ -96,28 +100,31 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
                 audioMixFilter += `[${audioIndex}:a]`;
             });
             audioMixFilter += `amix=inputs=${audioStreamData.length}[a]`;
-            ffmpegArgs.push('-filter_complex', audioMixFilter);
-            ffmpegArgs.push('-map', '[a]');
+            //ffmpegArgs.push('-filter_complex', audioMixFilter);
+            //ffmpegArgs.push('-map', '[a]');
 
         } else if (audioStreamData.length === 1) {
             const audioIndex = this.plainTransport.findIndex(t => t.kind === 'audio');
-            ffmpegArgs.push('-map', `${audioIndex}:a`);
+            // ffmpegArgs.push('-map', `${audioIndex}:a`);
         }
         ffmpegArgs.push(
             // Video codec settings with explicit bitrate
-            '-c:v', 'libx264',
-            '-preset', 'veryfast',
+            '-preset', 'fast',
             '-tune', 'zerolatency',
-            '-b:v', '1000k',  // Reduced bitrate
-            '-maxrate', '1000k',
-            '-bufsize', '2000k',
+            '-b:v', '1200k',  // Reduced bitrate
+            '-maxrate', '1200k',
+            '-bufsize', '2400k',
+            '-threads', '4',
+
+            
             '-g', '30',       // Keyframe interval
             '-keyint_min', '30',
             '-sc_threshold', '0',
             '-bf', '0',       // Disable B-frames
             '-profile:v', 'baseline',  // Use baseline profile
             '-level', '3.0',  // Set H.264 level
-            '-x264opts', 'no-scenecut',  // Disable scene cut detection
+            '-x264opts', 'no-scenecut:filler=1',  // Disable scene cut detection
+            '-c:v', 'libx264',
             
             // Audio codec settings
             '-c:a', 'aac',
@@ -244,4 +251,7 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
         return fs.readFileSync(path.join(this.hlsDirPath, 'playlist.m3u8'), 'utf8');
     }
 
+    getHlsFile(filename: string){
+        return fs.readFileSync(path.join(this.hlsDirPath, filename), 'utf8');
+    }
 } 

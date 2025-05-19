@@ -8,7 +8,7 @@ import { LoggerModule } from '../logger/logger.module';
 @Module({
     imports: [
         ServeStaticModule.forRoot({
-            rootPath: join(process.cwd(), 'hls'),
+            rootPath: join(process.cwd(), 'public','hls'),
             serveRoot: '/',
         }),
         LoggerModule,
