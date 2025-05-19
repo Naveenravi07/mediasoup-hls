@@ -15,6 +15,7 @@ import { TransportProduceReq } from './dto/transport-produce-req';
 import { ConsumeSingleUserReq } from './dto/consume-single-user-req';
 import { type TransportConsumeReq } from './dto/transport-cnsume-req';
 import { StreamingService } from '../streaming/streaming.service';
+import net from "net"
 
 type UserData = {
     id: string;
@@ -204,8 +205,7 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
 
     async addProducerForStreaming(producer: Producer<mediasoup.types.AppData>, userId: string, kind: string) {
         // Find available ports
-        const portRange = { min: 10000, max: 10100 };
-        const port = await this.findAvailablePort(portRange.min, portRange.max);
+        const port = await this.findAvailablePort();
         if (!port) {
             throw new Error("No available ports found");
         }
@@ -266,33 +266,16 @@ export class MediasoupService implements OnModuleInit, OnModuleDestroy {
         }, 2000);
     }
 
-    private async findAvailablePort(min: number, max: number): Promise<number | null> {
-        const net = require('net');
-        
-        for (let port = min; port <= max; port++) {
-            try {
-                await new Promise((resolve, reject) => {
-                    const server = net.createServer();
-                    server.once('error', (err: any) => {
-                        if (err.code === 'EADDRINUSE') {
-                            resolve(false);
-                        } else {
-                            reject(err);
-                        }
-                    });
-                    server.once('listening', () => {
-                        server.close();
-                        resolve(true);
-                    });
-                    server.listen(port);
-                });
-                return port;
-            } catch (err) {
-                console.error(`Error checking port ${port}:`, err);
-                continue;
-            }
-        }
-        return null;
+    private async findAvailablePort(): Promise<number | null> {
+        return new Promise( res => {
+            const srv = net.createServer();
+            srv.listen(0, () => {
+                const addr = srv.address();
+                const port = typeof addr === 'string' ? null : (addr?.port ?? null);
+                srv.close((err) => res(port));
+            });
+        })
+    
     }
 
     async createConsumerFromTransport(data: TransportConsumeReq, userId: string) {

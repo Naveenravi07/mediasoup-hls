@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { StreamData } from './dto/streamData';
 import { ChildProcess, spawn } from 'child_process';
 import { RtpParameters, MediaKind } from 'mediasoup/node/lib/rtpParametersTypes';
-import path from 'path';
+import path, { join } from 'path';
 import fs from 'fs';
 import { LoggerService } from '../logger/logger.service';
 
@@ -82,31 +82,33 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
             ffmpegArgs.push('-i', sdpFilePath);
         })
 
-        if (videoStreamData.length > 1) {
-            const layoutFilter = this.createGridLayout(videoStreamData.length);
-            //ffmpegArgs.push('-filter_complex', layoutFilter);
-            //ffmpegArgs.push('-map', '[v]');
-        } else if (videoStreamData.length === 1) {
-            const videoIndex = this.plainTransport.findIndex(t => t.kind === 'video');
-            //ffmpegArgs.push('-map', `${videoIndex}:v`);
+        if (videoStreamData.length > 0) {
+            const videoIndices = videoStreamData.map(stream => 
+                this.plainTransport.indexOf(stream));
+            
+            if (videoIndices.length > 1) {
+                const layoutFilter = this.createGridLayout(videoIndices);
+                ffmpegArgs.push('-filter_complex', layoutFilter);
+                ffmpegArgs.push('-map', '[v]');
+            } else {
+                ffmpegArgs.push('-map', `${videoIndices[0]}:v`);
+            }
         }
 
-        if (audioStreamData.length > 1) {
-            let audioMixFilter = '';
-            audioStreamData.forEach((_, i) => {
-                const audioIndex = this.plainTransport.findIndex(
-                    (t, idx) => t.kind === 'audio' && audioStreamData.indexOf(t) === i);
+        if (audioStreamData.length > 0) {
+            const audioIndices = audioStreamData.map(stream => 
+                this.plainTransport.indexOf(stream));
 
-                audioMixFilter += `[${audioIndex}:a]`;
-            });
-            audioMixFilter += `amix=inputs=${audioStreamData.length}[a]`;
-            //ffmpegArgs.push('-filter_complex', audioMixFilter);
-            //ffmpegArgs.push('-map', '[a]');
-
-        } else if (audioStreamData.length === 1) {
-            const audioIndex = this.plainTransport.findIndex(t => t.kind === 'audio');
-            // ffmpegArgs.push('-map', `${audioIndex}:a`);
+            if (audioIndices.length > 1) {
+                let audioMixFilter = audioIndices.map(idx => `[${idx}:a]`).join('');
+                audioMixFilter += `amix=inputs=${audioIndices.length}:duration=longest[a]`;
+                ffmpegArgs.push('-filter_complex', audioMixFilter);
+                ffmpegArgs.push('-map', '[a]');
+            } else {
+                ffmpegArgs.push('-map', `${audioIndices[0]}:a`);
+            }
         }
+
         ffmpegArgs.push(
             // Video codec settings with explicit bitrate
             '-preset', 'fast',
@@ -161,7 +163,15 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
     }
 
     restartStreaming() {
+        this.ffmpegProcess?.kill();
+        fs.rmSync(join(this.hlsDirPath,'*'), { recursive: true, force: true });
+        fs.rmSync(join(this.sdpDirPath,'*'), { recursive: true, force: true });
+        fs.rmSync(join(process.cwd(),'logs','*' ,this.loggerName),{recursive:true,force:true});
 
+        setTimeout(()=>{
+            console.log('Restarting streaming');
+            this.startStreaming();
+        },5000)
     }
 
     generateSDP(kind: MediaKind, ip: string, port: number, rtpParameters: RtpParameters): string {
@@ -209,49 +219,77 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
         return sdp;
     }
 
+    private createGridLayout(videoIndices: number[]): string {
+    const videoCount = videoIndices.length;
+    if (videoCount === 0) return '';
+    if (videoCount === 1) return `[${videoIndices[0]}:v]scale=1280:720[v]`;
 
-    private createGridLayout(videoCount: number): string {
-        if (videoCount === 0) return '';
-        if (videoCount === 1) return '[0:v]scale=1280:720[v]';
+    let filter = '';
+    const rows = Math.ceil(Math.sqrt(videoCount));
+    const cols = Math.ceil(videoCount / rows);
+    const cellWidth = Math.floor(1280 / cols);
+    const cellHeight = Math.floor(720 / rows);
 
-        let filter = '';
-        const rows = Math.ceil(Math.sqrt(videoCount));
-        const cols = Math.ceil(videoCount / rows);
-        const cellWidth = Math.floor(1280 / cols);
-        const cellHeight = Math.floor(720 / rows);
+    // Scale each video
+    videoIndices.forEach((videoIndex, i) => {
+        filter += `[${videoIndex}:v]scale=${cellWidth}:${cellHeight}[v${i}];`;
+    });
 
-        // Scale each video
-        for (let i = 0; i < videoCount; i++) {
-            const videoIndex = this.plainTransport.findIndex((t, idx) => t.kind === 'video' && idx === i);
-            if (videoIndex === -1) continue;
-            filter += `[${videoIndex}:v]scale=${cellWidth}:${cellHeight}[v${i}];`;
-        }
-
-        // Create grid
-        let xStack = '';
-        for (let r = 0; r < rows; r++) {
-            let rowStack = '';
-            for (let c = 0; c < cols; c++) {
-                const i = r * cols + c;
-                if (i < videoCount) {
-                    rowStack += `[v${i}]`;
-                }
-            }
-            if (rowStack) {
-                filter += `${rowStack}hstack=inputs=${Math.min(cols, videoCount - r * cols)}[row${r}];`;
-                xStack += `[row${r}]`;
+    // Create grid - modified to ensure hstack always gets ≥2 inputs
+    let xStack = '';
+    let gridInputs = 0;
+    
+    for (let r = 0; r < rows; r++) {
+        const rowInputs : string[] = [];
+        for (let c = 0; c < cols; c++) {
+            const i = r * cols + c;
+            if (i < videoCount) {
+                rowInputs.push(`[v${i}]`);
             }
         }
-
-        filter += `${xStack}vstack=inputs=${rows}[v]`;
-        return filter;
+        
+        if (rowInputs.length > 1) {
+            // Horizontal stack if we have multiple videos in this row
+            filter += `${rowInputs.join('')}hstack=inputs=${rowInputs.length}[row${r}];`;
+            xStack += `[row${r}]`;
+            gridInputs++;
+        } else if (rowInputs.length === 1) {
+            // Single video in row - just pass through
+            filter += `${rowInputs[0]}copy[row${r}];`;
+            xStack += `[row${r}]`;
+            gridInputs++;
+        }
     }
 
+    if (gridInputs > 1) {
+        // Vertical stack if we have multiple rows
+        filter += `${xStack}vstack=inputs=${gridInputs}[v]`;
+    } else if (gridInputs === 1) {
+        // Single row - just pass through
+        filter += `${xStack}copy[v]`;
+    }
+
+    return filter;
+}
+
+    
+
     getHls(){
-        return fs.readFileSync(path.join(this.hlsDirPath, 'playlist.m3u8'), 'utf8');
+        const content = fs.readFileSync(path.join(this.hlsDirPath, 'playlist.m3u8'), 'utf8');
+        // Ensure absolute URLs in playlist
+        return content.replace(/segment_\d+\.ts/g, (match) => {
+            return `http://localhost:3000/streaming/${match}`;
+        });
     }
 
     getHlsFile(filename: string){
-        return fs.readFileSync(path.join(this.hlsDirPath, filename), 'utf8');
+        if (!filename.match(/^segment_\d+\.ts$/)) {
+            throw new Error('Invalid segment filename');
+        }
+        const filePath = path.join(this.hlsDirPath, filename);
+        if (!fs.existsSync(filePath)) {
+            throw new Error('Segment file not found');
+        }
+        return fs.createReadStream(filePath);
     }
 } 
