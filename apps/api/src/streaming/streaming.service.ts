@@ -149,10 +149,10 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
         });
 
         this.ffmpegProcess?.stdout?.on('data', (data) => {
-            this.logger.logStdout(this.loggerName, Buffer.from(data));
+            // this.logger.logStdout(this.loggerName, Buffer.from(data));
         });
         this.ffmpegProcess?.stderr?.on('data', (data) => {
-            this.logger.logStderr(this.loggerName, Buffer.from(data));
+            // this.logger.logStderr(this.loggerName, Buffer.from(data));
         });
 
         this.ffmpegProcess?.on('close', (code) => {
@@ -164,14 +164,17 @@ export class StreamingService implements OnModuleInit, OnModuleDestroy {
 
     restartStreaming() {
         this.ffmpegProcess?.kill();
-        fs.rmSync(join(this.hlsDirPath,'*'), { recursive: true, force: true });
-        fs.rmSync(join(this.sdpDirPath,'*'), { recursive: true, force: true });
-        fs.rmSync(join(process.cwd(),'logs','*' ,this.loggerName),{recursive:true,force:true});
+        fs.rmSync(join(this.hlsDirPath), { recursive: true, force: true });
+        fs.mkdirSync(this.hlsDirPath)
+        fs.rmSync(join(this.sdpDirPath), { recursive: true, force: true });
+        fs.mkdirSync(this.sdpDirPath)
+        fs.rmSync(join(process.cwd(),'logs',this.loggerName),{recursive:true,force:true});
+        fs.mkdirSync(join(process.cwd(),'logs',this.loggerName))
 
         setTimeout(()=>{
             console.log('Restarting streaming');
             this.startStreaming();
-        },5000)
+        },3000)
     }
 
     generateSDP(kind: MediaKind, ip: string, port: number, rtpParameters: RtpParameters): string {
